@@ -108,7 +108,7 @@ function aPedidos(){
   L.sort((a,b)=>f.per==='passados'?(a.retirada<b.retirada?1:-1):(a.retirada<b.retirada?-1:a.retirada>b.retirada?1:a.numero-b.numero));
   const pend=S.pedidos.filter(p=>p.status==='pendente'), hoje=S.pedidos.filter(p=>p.retirada===n&&p.status!=='cancelado');
   const opt=(arr,cur)=>arr.map(o=>`<option value="${o[0]}" ${o[0]===cur?'selected':''}>${esc(o[1])}</option>`).join('');
-  return `<div class="page-head"><div><h1>Pedidos</h1><p>Aprovação: <strong>${S.config.aprovacao==='manual'?'manual (pedidos entram pendentes)':'automática (entram confirmados)'}</strong></p></div><button class="btn small" type="button" data-act="atualizar">Atualizar</button></div>
+  return `<div class="page-head"><div><h1>Pedidos</h1><p>Aprovação: <strong>${S.config.aprovacao==='manual'?'manual (pedidos entram pendentes)':'automática (entram confirmados)'}</strong></p></div><div class="actions"><button class="btn primary" type="button" data-act="ped-msg">Pedido por mensagem</button><button class="btn" type="button" data-act="atualizar">Atualizar</button></div></div>
   <div class="tiles">
     <button class="tile" style="--c:var(--warn);text-align:left;cursor:pointer;font:inherit;color:inherit" type="button" data-act="filtro-pend"><b>${pend.length}</b><span>Pendentes de aprovação</span></button>
     <div class="tile" style="--c:var(--accent)"><b>${hoje.length}</b><span>Retiradas hoje</span></div>
@@ -134,6 +134,40 @@ function dlgPedido(id){
     <button class="btn" type="button" data-act="copiar-comp" data-id="${p.id}">Copiar comprovante</button>
     ${['pendente','confirmado','em_preparacao'].indexOf(p.status)>=0?`<button class="btn danger" type="button" data-act="cancelar" data-id="${p.id}">Cancelar pedido</button>`:''}</div>`,{size:'wide'});
 }
+/* ----- pedido lançado pela administração a partir de uma mensagem ----- */
+function proxData(){ let d=addDays(hojeSrv,1); for(let i=0;i<14&&regraData(d);i++) d=addDays(d,1); return d; }
+function prodsCliente(cid){ const c=S.clientes.find(x=>x.id===cid); if(!c) return []; const no=sabOrd().filter(s=>s.ativo&&c.catalogo[s.id]!==undefined); const fora=sabOrd().filter(s=>s.ativo&&c.catalogo[s.id]===undefined);
+  return no.map(s=>({id:s.id,nome:s.nome,preco:c.catalogo[s.id]!=null?c.catalogo[s.id]:s.preco})).concat(fora.map(s=>({id:s.id,nome:s.nome+' (fora do catálogo)',preco:s.preco,fora:true}))); }
+function dlgPedidoMsg(){
+  const cli=S.clientes.filter(c=>!c.bloqueado);
+  if(!cli.length){ openDlg('Pedido por mensagem','<p style="margin:0">Cadastre um cliente antes, em Clientes.</p>'); return; }
+  openDlg('Pedido por mensagem',`<p class="muted" style="margin:0;font-size:13px">Cole a mensagem que o cliente mandou no WhatsApp. O pedido entra como <b>confirmado</b>, com os preços do catálogo do cliente.</p>
+    <div class="row2"><label class="field">Cliente<select name="cli" id="pmCli"><option value="">Selecione</option>${cli.map(c=>`<option value="${c.id}">${esc(c.nome)}</option>`).join('')}</select></label>
+    <label class="field">Retirada<input type="date" name="d" id="pmData" value="${proxData()}" min="${hojeSrv}"></label></div>
+    <label class="field">Mensagem do cliente<textarea name="msg" id="pmMsg" style="min-height:140px" placeholder="Bom dia! Pedido pra sexta:&#10;Carne: 50&#10;Frango c/ catupiri - 30&#10;4 queijo 20"></textarea></label>
+    <div class="actions"><button class="btn" type="button" data-act="pm-ler">Ler mensagem</button></div>
+    <div id="pmLeitura" style="display:flex;flex-direction:column;gap:10px"></div>
+    <div class="totalbar"><span>Total</span><span id="pmTotal">—</span></div>
+    <div id="pmAviso"></div>`,
+  {size:'wide',ok:'Lançar pedido',onOk:async fd=>{
+    const cid=fd.get('cli'), d=fd.get('d'); if(!cid) return 'Escolha o cliente.'; if(!d) return 'Escolha a data de retirada.';
+    const box=$('#pmLeitura'); if(!box.querySelector('[data-leit]')) return 'Toque em “Ler mensagem” antes de lançar.';
+    const soma=coletaLeitura(box), ids=Object.keys(soma); if(!ids.length) return 'Nenhum sabor com quantidade para lançar.';
+    const regra=await q(sb.rpc('regra_data',{p_data:d}));
+    if(regra&&!fd.get('forcar')){ $('#pmAviso').innerHTML=`<div class="warnbox"><strong>Atenção: ${esc(regra)}.</strong><span>Para os clientes essa data não está disponível agora. Como administração, você pode lançar mesmo assim.</span><label class="check"><input type="checkbox" name="forcar"> Lançar mesmo assim</label></div>`; return 'Confira o aviso sobre a data.'; }
+    const ped=normPed(await q(sb.rpc('admin_criar_pedido',{p_cliente:cid,p_retirada:d,p_itens:ids.map(id=>({sabor_id:id,qtd:soma[id]}))})));
+    S.pedidos.unshift(ped); render(); aoFecharDlg=()=>dlgPedido(ped.id); toast('Pedido nº '+nPed(ped.numero)+' lançado para '+ped.cliente_nome+'.'); return null;
+  }});
+}
+function pmLer(){
+  const cid=$('#pmCli').value; if(!cid){ toast('Escolha o cliente primeiro.'); $('#pmCli').focus(); return; }
+  const P=prodsCliente(cid), dentro=P.filter(p=>!p.fora);
+  const rows=lerMensagem($('#pmMsg').value,dentro.length?dentro:P);
+  const box=$('#pmLeitura'); box.innerHTML=htmlLeitura(rows,P,''); labelTables(box); pmTotal();
+}
+function pmTotal(){ const cid=$('#pmCli')&&$('#pmCli').value, el=$('#pmTotal'); if(!el) return; if(!cid){ el.textContent='—'; return; }
+  const P=prodsCliente(cid), soma=coletaLeitura($('#pmLeitura')); let q2=0,t=0; Object.keys(soma).forEach(id=>{ const p=P.find(x=>x.id===id); if(p){ q2+=soma[id]; t+=soma[id]*p.preco; } });
+  el.textContent=q2?num(q2)+' pastéis · '+brl(t):'—'; }
 async function mudaStatus(p,st,motivo){ const r=await q(sb.rpc('admin_mudar_status',{p_pedido:p.id,p_status:st,p_motivo:motivo||''})); const i=S.pedidos.findIndex(x=>x.id===p.id); const np=Object.assign({},r,{criado_em:p.criado_em}); if(i>=0) S.pedidos[i]=np; return np; }
 function dlgCancelar(id){
   const p=S.pedidos.find(x=>x.id===id);
@@ -337,6 +371,8 @@ document.addEventListener('click',ev=>{
   else if(a==='atualizar') acao(async()=>{ const n=await recarregaPedidos(true); render(); if(!n) toast('Pedidos atualizados.'); });
   else if(a==='filtro-pend'){ ui.af={st:'pendente',cli:'todos',per:'todas'}; render(); }
   else if(a==='ped') dlgPedido(id);
+  else if(a==='ped-msg') dlgPedidoMsg();
+  else if(a==='pm-ler') pmLer();
   else if(a==='avancar') acao(async()=>{ const p=ped(), nx=FLUXO[p.status]; if(!nx) return; b.disabled=true; await mudaStatus(p,nx[0]); const inDlg=!$('#dlg').hidden; render(); if(inDlg) dlgPedido(id); toast('Pedido nº '+nPed(p.numero)+': '+ST[nx[0]].t+'.'); });
   else if(a==='cancelar') dlgCancelar(id);
   else if(a==='copiar-comp') copyText(comprovanteTxt(ped(),S.config.empresa),b);
@@ -360,12 +396,15 @@ document.addEventListener('click',ev=>{
 });
 document.addEventListener('change',ev=>{
   const t=ev.target;
-  if(t.dataset.af){ ui.af[t.dataset.af]=t.value; render(); }
+  if(t.id==='pmCli'){ if($('#pmLeitura').querySelector('[data-leit]')) pmLer(); else pmTotal(); }
+  else if(t.dataset.leit&&t.closest('#pmLeitura')) pmTotal();
+  else if(t.dataset.af){ ui.af[t.dataset.af]=t.value; render(); }
   else if(t.dataset.ar){ ui.ar[t.dataset.ar]=t.value; render(); }
   else if(t.id==='catCopia'&&t.value){ const o=S.clientes.find(x=>x.id===t.value); document.querySelectorAll('#dlgF .catgrid li').forEach(li=>{ const cb=li.querySelector('input[type=checkbox]'), pr=li.querySelector('.price-in'), sid=cb.name.slice(4); const lib=o.catalogo[sid]!==undefined; cb.checked=lib; li.classList.toggle('off',!lib); pr.value=lib&&o.catalogo[sid]!=null?moneyIn(o.catalogo[sid]):''; }); toast('Catálogo de '+o.nome+' copiado. Salve para confirmar.'); t.value=''; }
   else if(t.type==='checkbox'&&t.name&&t.name.indexOf('lib_')===0) t.closest('li').classList.toggle('off',!t.checked);
 });
 document.addEventListener('keydown',ev=>{ if(ev.key==='Escape'&&!$('#dlg').hidden) closeDlg(); });
+document.addEventListener('input',ev=>{ if(ev.target.dataset&&ev.target.dataset.leit==='qtd'&&ev.target.closest('#pmLeitura')) pmTotal(); });
 window.addEventListener('hashchange',route);
 async function autoAtualiza(){ if(estado!=='ok'||document.hidden||!$('#dlg').hidden) return; const foco=document.activeElement&&/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName); try{ const n=await recarregaPedidos(true); if((n||ui.v==='pedidos'||ui.v==='calendario')&&!foco) render(); }catch(e){} }
 setInterval(autoAtualiza,30000);

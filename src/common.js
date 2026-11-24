@@ -52,7 +52,7 @@ function copyText(txt,btn){
   const fb=()=>openDlg('Copiar',`<label class="field">Selecione e copie<textarea readonly style="min-height:220px;font-family:var(--f-mono);font-size:12px">${esc(txt)}</textarea></label>`);
   try{ navigator.clipboard.writeText(txt).then(()=>{ const o=btn.textContent; btn.textContent='Copiado'; setTimeout(()=>{ if(document.body.contains(btn)) btn.textContent=o; },1800); },fb); }catch(e){ fb(); }
 }
-const ERROS={USUARIO_EXISTE:'Esse usuário já é de outro cliente.',SENHA_CURTA:'A senha precisa ter pelo menos 4 caracteres.',SENHA_OBRIGATORIA:'Defina uma senha para o cliente.',SEM_PERMISSAO:'Sua conta não tem permissão de administrador.',STATUS_INVALIDO:'Situação inválida.'};
+const ERROS={CLIENTE_INEXISTENTE:'Cliente não encontrado.',DATA_INVALIDA:'A data de retirada já passou.',PEDIDO_VAZIO:'Nenhum sabor com quantidade para lançar.',USUARIO_EXISTE:'Esse usuário já é de outro cliente.',SENHA_CURTA:'A senha precisa ter pelo menos 4 caracteres.',SENHA_OBRIGATORIA:'Defina uma senha para o cliente.',SEM_PERMISSAO:'Sua conta não tem permissão de administrador.',STATUS_INVALIDO:'Situação inválida.'};
 function msgErro(e){
   const m=String((e&&(e.message||e.error_description))||e||'');
   for(const k in ERROS) if(m.indexOf(k)>=0) return ERROS[k];
@@ -85,3 +85,61 @@ function comprovanteTxt(p,empresa){
 }
 const LOGO=`<svg width="40" height="40" viewBox="0 0 40 40" aria-hidden="true"><rect width="40" height="40" rx="9" fill="#141414"/><circle cx="20" cy="20" r="12.5" fill="#D7192A"/><text x="20" y="24.6" text-anchor="middle" font-family="Barlow Condensed,Arial Narrow,sans-serif" font-weight="700" font-size="14" fill="#fff" letter-spacing=".5">JS</text></svg>`;
 function semConfig(){ return !CFG.url||!CFG.key||!window.supabase; }
+
+/* ---------- leitor de mensagem: "Nome: Quantidade" com tolerância a erros de escrita ---------- */
+const STOP=new Set(['com','de','do','da','das','dos','e','c','sabor','sabores','pastel','pasteis','salgado','salgados','x']);
+const normTxt=s=>String(s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/\bc\//g,'com ').replace(/\bs\//g,'sem ').replace(/[^a-z0-9 ]+/g,' ').replace(/\s+/g,' ').trim();
+const toks=s=>normTxt(s).split(' ').filter(t=>t&&!STOP.has(t));
+function lev(a,b){ const m=a.length,n=b.length; if(!m) return n; if(!n) return m; let prev=Array.from({length:n+1},(_,j)=>j);
+  for(let i=1;i<=m;i++){ const cur=[i]; for(let j=1;j<=n;j++) cur[j]=Math.min(prev[j]+1,cur[j-1]+1,prev[j-1]+(a[i-1]===b[j-1]?0:1)); prev=cur; } return prev[n]; }
+function tsim(a,b){ if(a===b) return 1; if(/^\d+$/.test(a)||/^\d+$/.test(b)) return 0; if(a.length>=3&&b.startsWith(a)) return .92; if(b.length>=3&&a.startsWith(b)) return .85; return 1-lev(a,b)/Math.max(a.length,b.length); }
+function simil(q,p){
+  if(!q.length||!p.length) return 0;
+  const bq=q.map(t=>Math.max(...p.map(u=>tsim(t,u)))), bp=p.map(u=>Math.max(...q.map(t=>tsim(t,u))));
+  let tok=(bq.reduce((a,b)=>a+b,0)+bp.reduce((a,b)=>a+b,0))/(q.length+p.length);
+  if(bq.every(x=>x>=.85)) tok=Math.max(tok,.7+.3*Math.min(1,q.length/p.length)); /* nome abreviado: "Brócolis" → "Brócolis com bacon e queijo" */
+  const A=q.join(''), B=p.join(''); const whole=1-lev(A,B)/Math.max(A.length,B.length);
+  return Math.max(tok,whole);
+}
+function parseLinha(raw){
+  let s=raw.replace(/^[\s\-–•*·>]+/,'').replace(/[*_~]/g,'').trim(); if(!s) return null;
+  let mult=1; const dz=/\b(d[uú]zias?|dz)\b\.?/i; if(dz.test(s)){ mult=12; s=s.replace(dz,' '); }
+  s=s.replace(/\b(unidades?|unids?|unds?|un|pcs?|p[cç]s|pasteis|pastéis)\b\.?/gi,' ').replace(/\s+/g,' ').trim();
+  const N='(\\d+)';
+  let m, nome, q;
+  if((m=s.match(new RegExp('^(.*?\\D)\\s*[:=–—-]+\\s*x?\\s*'+N+'\\s*x?$','i')))){ nome=m[1]; q=m[2]; }
+  else if((m=s.match(new RegExp('^(.*?[a-z\\u00c0-\\u017f].*?)\\s+x?\\s*'+N+'\\s*x?$','i')))){ nome=m[1]; q=m[2]; }
+  else if((m=s.match(new RegExp('^'+N+'\\s*x?\\s*(?:de\\s+)?(.*[a-z\\u00c0-\\u017f].*)$','i')))){ q=m[1]; nome=m[2]; }
+  else return {raw:raw.trim(),nome:s,qtd:0,semQtd:true};
+  return {raw:raw.trim(),nome:nome.replace(/[:=–—-]+\s*$/,'').trim(),qtd:parseInt(q,10)*mult};
+}
+/* produtos: [{id,nome}] na ordem de exibição */
+function lerMensagem(txt,produtos){
+  const P=produtos.map(p=>({id:p.id,t:toks(p.nome)}));
+  return String(txt||'').split(/\n|;|,\s+/).map(parseLinha).filter(Boolean).map(l=>{
+    if(l.semQtd||!l.qtd) return Object.assign(l,{pid:'',st:'ign'});
+    const q=toks(l.nome); const sc=P.map(a=>({id:a.id,s:simil(q,a.t)})).sort((a,b)=>b.s-a.s);
+    const b1=sc[0]||{s:0}, b2=sc[1]||{s:0};
+    const st=b1.s>=.8&&(b1.s>=.95||b1.s-b2.s>=.05)?'ok':b1.s>=.6?'confira':'nao';
+    return Object.assign(l,{pid:st==='nao'?'':b1.id,st:st});
+  });
+}
+const LST={ok:{t:'Reconhecido',c:'ok'},confira:{t:'Confira',c:'warn'},nao:{t:'Não encontrado',c:'bad'},ign:{t:'Ignorada',c:'off'}};
+function htmlLeitura(rows,produtos,botao){
+  if(!rows.length) return '<p class="empty">Nada para ler. Cole a mensagem acima.</p>';
+  const opts=sel=>'<option value="">— ignorar —</option>'+produtos.map(p=>`<option value="${p.id}" ${p.id===sel?'selected':''}>${esc(p.nome)}</option>`).join('');
+  const val=rows.filter(l=>l.st!=='ign'), ig=rows.filter(l=>l.st==='ign');
+  const nOk=val.filter(l=>l.st==='ok').length, nC=val.length-nOk;
+  return `<p style="margin:0;font-weight:600">${nOk} reconhecido${nOk===1?'':'s'}${nC?` · <span class="bad-t">${nC} para conferir</span>`:''}</p>
+    ${val.length?`<div class="tw"><table><thead><tr><th>Mensagem</th><th>Sabor</th><th>Qtd.</th><th>Situação</th></tr></thead><tbody>
+    ${val.map((l,i)=>`<tr><td>${esc(l.raw)}</td><td><select class="price-in" style="width:auto;max-width:100%;text-align:left" data-leit="pid" data-i="${i}" aria-label="Sabor da linha ${i+1}">${opts(l.pid)}</select></td>
+      <td><input class="price-in" style="width:76px" data-leit="qtd" data-i="${i}" inputmode="numeric" value="${l.qtd||''}" aria-label="Quantidade da linha ${i+1}"></td><td><span class="pill ${LST[l.st].c}">${LST[l.st].t}</span></td></tr>`).join('')}
+    </tbody></table></div>`:''}
+    ${ig.length?`<p class="muted" style="margin:0;font-size:13px">Ignoradas (sem quantidade): ${ig.map(l=>'“'+esc(l.raw)+'”').join(', ')}</p>`:''}
+    ${botao||''}`;
+}
+function coletaLeitura(root){
+  const soma={};
+  root.querySelectorAll('[data-leit="pid"]').forEach(sel=>{ const inp=root.querySelector('[data-leit="qtd"][data-i="'+sel.dataset.i+'"]'); const q=parseInt0(inp?inp.value:0); if(sel.value&&q>0) soma[sel.value]=(soma[sel.value]||0)+q; });
+  return soma;
+}

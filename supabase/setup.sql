@@ -370,6 +370,35 @@ begin
   delete from public.catalogo where sabor_id = p_sabor;
 end $$;
 
+create or replace function public.admin_criar_pedido(p_cliente uuid, p_retirada date, p_itens jsonb) returns json
+language plpgsql security definer set search_path = public as $$
+declare c public.clientes; r record; it jsonb := '[]'; tq int := 0; tot int := 0; ped public.pedidos; agora text;
+begin
+  if not public.is_admin() then raise exception 'SEM_PERMISSAO'; end if;
+  select * into c from public.clientes where id = p_cliente;
+  if c.id is null then raise exception 'CLIENTE_INEXISTENTE'; end if;
+  if p_retirada is null or p_retirada < public.agora_br()::date then raise exception 'DATA_INVALIDA'; end if;
+  for r in
+    select x.sid, sum(x.q)::int as q, s.nome, coalesce(k.preco, s.preco) as preco
+    from (select (e->>'sabor_id')::uuid as sid, floor((e->>'qtd')::numeric)::int as q from jsonb_array_elements(p_itens) e) x
+    join public.sabores s on s.id = x.sid and not s.excluido
+    left join public.catalogo k on k.cliente_id = c.id and k.sabor_id = x.sid
+    where x.q > 0
+    group by x.sid, s.nome, s.ordem, k.preco, s.preco
+    order by s.ordem, s.nome
+  loop
+    it := it || jsonb_build_object('sabor_id', r.sid, 'nome', r.nome, 'qtd', r.q, 'preco', r.preco, 'subtotal', r.q * r.preco);
+    tq := tq + r.q; tot := tot + r.q * r.preco;
+  end loop;
+  if tq = 0 then raise exception 'PEDIDO_VAZIO'; end if;
+  agora := to_char(public.agora_br(), 'YYYY-MM-DD HH24:MI');
+  insert into public.pedidos (cliente_id, cliente_nome, retirada, itens, total_qtd, total, status, historico)
+  values (c.id, c.nome, p_retirada, it, tq, tot, 'confirmado',
+          jsonb_build_array(jsonb_build_object('quando', agora, 'status', 'confirmado', 'por', 'Administração', 'motivo', 'Lançado pela administração a partir de mensagem')))
+  returning * into ped;
+  return public.pedido_json(ped);
+end $$;
+
 create or replace function public.admin_agora() returns text
 language sql stable as $$ select to_char(public.agora_br(), 'YYYY-MM-DD HH24:MI') $$;
 
@@ -414,6 +443,7 @@ grant execute on function public.admin_salvar_catalogo(uuid, jsonb) to authentic
 grant execute on function public.admin_mudar_status(uuid, text, text) to authenticated;
 grant execute on function public.admin_excluir_sabor(uuid) to authenticated;
 grant execute on function public.admin_agora() to authenticated;
+grant execute on function public.admin_criar_pedido(uuid, date, jsonb) to authenticated;
 
 -- funções internas usadas dentro das outras
 grant execute on function public.agora_br(), public.regra_data(date), public.datas_disponiveis(), public.pedido_json(public.pedidos) to authenticated;

@@ -479,7 +479,7 @@ function copyText(txt,btn){
   const fb=()=>openDlg('Copiar',`<label class="field">Selecione e copie<textarea readonly style="min-height:220px;font-family:var(--f-mono);font-size:12px">${esc(txt)}</textarea></label>`);
   try{ navigator.clipboard.writeText(txt).then(()=>{ const o=btn.textContent; btn.textContent='Copiado'; setTimeout(()=>{ if(document.body.contains(btn)) btn.textContent=o; },1800); },fb); }catch(e){ fb(); }
 }
-const ERROS={USUARIO_EXISTE:'Esse usuário já é de outro cliente.',SENHA_CURTA:'A senha precisa ter pelo menos 4 caracteres.',SENHA_OBRIGATORIA:'Defina uma senha para o cliente.',SEM_PERMISSAO:'Sua conta não tem permissão de administrador.',STATUS_INVALIDO:'Situação inválida.'};
+const ERROS={CLIENTE_INEXISTENTE:'Cliente não encontrado.',DATA_INVALIDA:'A data de retirada já passou.',PEDIDO_VAZIO:'Nenhum sabor com quantidade para lançar.',USUARIO_EXISTE:'Esse usuário já é de outro cliente.',SENHA_CURTA:'A senha precisa ter pelo menos 4 caracteres.',SENHA_OBRIGATORIA:'Defina uma senha para o cliente.',SEM_PERMISSAO:'Sua conta não tem permissão de administrador.',STATUS_INVALIDO:'Situação inválida.'};
 function msgErro(e){
   const m=String((e&&(e.message||e.error_description))||e||'');
   for(const k in ERROS) if(m.indexOf(k)>=0) return ERROS[k];
@@ -512,6 +512,64 @@ function comprovanteTxt(p,empresa){
 }
 const LOGO=`<svg width="40" height="40" viewBox="0 0 40 40" aria-hidden="true"><rect width="40" height="40" rx="9" fill="#141414"/><circle cx="20" cy="20" r="12.5" fill="#D7192A"/><text x="20" y="24.6" text-anchor="middle" font-family="Barlow Condensed,Arial Narrow,sans-serif" font-weight="700" font-size="14" fill="#fff" letter-spacing=".5">JS</text></svg>`;
 function semConfig(){ return !CFG.url||!CFG.key||!window.supabase; }
+
+/* ---------- leitor de mensagem: "Nome: Quantidade" com tolerância a erros de escrita ---------- */
+const STOP=new Set(['com','de','do','da','das','dos','e','c','sabor','sabores','pastel','pasteis','salgado','salgados','x']);
+const normTxt=s=>String(s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/\bc\//g,'com ').replace(/\bs\//g,'sem ').replace(/[^a-z0-9 ]+/g,' ').replace(/\s+/g,' ').trim();
+const toks=s=>normTxt(s).split(' ').filter(t=>t&&!STOP.has(t));
+function lev(a,b){ const m=a.length,n=b.length; if(!m) return n; if(!n) return m; let prev=Array.from({length:n+1},(_,j)=>j);
+  for(let i=1;i<=m;i++){ const cur=[i]; for(let j=1;j<=n;j++) cur[j]=Math.min(prev[j]+1,cur[j-1]+1,prev[j-1]+(a[i-1]===b[j-1]?0:1)); prev=cur; } return prev[n]; }
+function tsim(a,b){ if(a===b) return 1; if(/^\d+$/.test(a)||/^\d+$/.test(b)) return 0; if(a.length>=3&&b.startsWith(a)) return .92; if(b.length>=3&&a.startsWith(b)) return .85; return 1-lev(a,b)/Math.max(a.length,b.length); }
+function simil(q,p){
+  if(!q.length||!p.length) return 0;
+  const bq=q.map(t=>Math.max(...p.map(u=>tsim(t,u)))), bp=p.map(u=>Math.max(...q.map(t=>tsim(t,u))));
+  let tok=(bq.reduce((a,b)=>a+b,0)+bp.reduce((a,b)=>a+b,0))/(q.length+p.length);
+  if(bq.every(x=>x>=.85)) tok=Math.max(tok,.7+.3*Math.min(1,q.length/p.length)); /* nome abreviado: "Brócolis" → "Brócolis com bacon e queijo" */
+  const A=q.join(''), B=p.join(''); const whole=1-lev(A,B)/Math.max(A.length,B.length);
+  return Math.max(tok,whole);
+}
+function parseLinha(raw){
+  let s=raw.replace(/^[\s\-–•*·>]+/,'').replace(/[*_~]/g,'').trim(); if(!s) return null;
+  let mult=1; const dz=/\b(d[uú]zias?|dz)\b\.?/i; if(dz.test(s)){ mult=12; s=s.replace(dz,' '); }
+  s=s.replace(/\b(unidades?|unids?|unds?|un|pcs?|p[cç]s|pasteis|pastéis)\b\.?/gi,' ').replace(/\s+/g,' ').trim();
+  const N='(\\d+)';
+  let m, nome, q;
+  if((m=s.match(new RegExp('^(.*?\\D)\\s*[:=–—-]+\\s*x?\\s*'+N+'\\s*x?$','i')))){ nome=m[1]; q=m[2]; }
+  else if((m=s.match(new RegExp('^(.*?[a-z\\u00c0-\\u017f].*?)\\s+x?\\s*'+N+'\\s*x?$','i')))){ nome=m[1]; q=m[2]; }
+  else if((m=s.match(new RegExp('^'+N+'\\s*x?\\s*(?:de\\s+)?(.*[a-z\\u00c0-\\u017f].*)$','i')))){ q=m[1]; nome=m[2]; }
+  else return {raw:raw.trim(),nome:s,qtd:0,semQtd:true};
+  return {raw:raw.trim(),nome:nome.replace(/[:=–—-]+\s*$/,'').trim(),qtd:parseInt(q,10)*mult};
+}
+/* produtos: [{id,nome}] na ordem de exibição */
+function lerMensagem(txt,produtos){
+  const P=produtos.map(p=>({id:p.id,t:toks(p.nome)}));
+  return String(txt||'').split(/\n|;|,\s+/).map(parseLinha).filter(Boolean).map(l=>{
+    if(l.semQtd||!l.qtd) return Object.assign(l,{pid:'',st:'ign'});
+    const q=toks(l.nome); const sc=P.map(a=>({id:a.id,s:simil(q,a.t)})).sort((a,b)=>b.s-a.s);
+    const b1=sc[0]||{s:0}, b2=sc[1]||{s:0};
+    const st=b1.s>=.8&&(b1.s>=.95||b1.s-b2.s>=.05)?'ok':b1.s>=.6?'confira':'nao';
+    return Object.assign(l,{pid:st==='nao'?'':b1.id,st:st});
+  });
+}
+const LST={ok:{t:'Reconhecido',c:'ok'},confira:{t:'Confira',c:'warn'},nao:{t:'Não encontrado',c:'bad'},ign:{t:'Ignorada',c:'off'}};
+function htmlLeitura(rows,produtos,botao){
+  if(!rows.length) return '<p class="empty">Nada para ler. Cole a mensagem acima.</p>';
+  const opts=sel=>'<option value="">— ignorar —</option>'+produtos.map(p=>`<option value="${p.id}" ${p.id===sel?'selected':''}>${esc(p.nome)}</option>`).join('');
+  const val=rows.filter(l=>l.st!=='ign'), ig=rows.filter(l=>l.st==='ign');
+  const nOk=val.filter(l=>l.st==='ok').length, nC=val.length-nOk;
+  return `<p style="margin:0;font-weight:600">${nOk} reconhecido${nOk===1?'':'s'}${nC?` · <span class="bad-t">${nC} para conferir</span>`:''}</p>
+    ${val.length?`<div class="tw"><table><thead><tr><th>Mensagem</th><th>Sabor</th><th>Qtd.</th><th>Situação</th></tr></thead><tbody>
+    ${val.map((l,i)=>`<tr><td>${esc(l.raw)}</td><td><select class="price-in" style="width:auto;max-width:100%;text-align:left" data-leit="pid" data-i="${i}" aria-label="Sabor da linha ${i+1}">${opts(l.pid)}</select></td>
+      <td><input class="price-in" style="width:76px" data-leit="qtd" data-i="${i}" inputmode="numeric" value="${l.qtd||''}" aria-label="Quantidade da linha ${i+1}"></td><td><span class="pill ${LST[l.st].c}">${LST[l.st].t}</span></td></tr>`).join('')}
+    </tbody></table></div>`:''}
+    ${ig.length?`<p class="muted" style="margin:0;font-size:13px">Ignoradas (sem quantidade): ${ig.map(l=>'“'+esc(l.raw)+'”').join(', ')}</p>`:''}
+    ${botao||''}`;
+}
+function coletaLeitura(root){
+  const soma={};
+  root.querySelectorAll('[data-leit="pid"]').forEach(sel=>{ const inp=root.querySelector('[data-leit="qtd"][data-i="'+sel.dataset.i+'"]'); const q=parseInt0(inp?inp.value:0); if(sel.value&&q>0) soma[sel.value]=(soma[sel.value]||0)+q; });
+  return soma;
+}
 
 document.getElementById('logoBox').innerHTML=LOGO;
 /* =========================== ADMINISTRAÇÃO =========================== */
@@ -624,7 +682,7 @@ function aPedidos(){
   L.sort((a,b)=>f.per==='passados'?(a.retirada<b.retirada?1:-1):(a.retirada<b.retirada?-1:a.retirada>b.retirada?1:a.numero-b.numero));
   const pend=S.pedidos.filter(p=>p.status==='pendente'), hoje=S.pedidos.filter(p=>p.retirada===n&&p.status!=='cancelado');
   const opt=(arr,cur)=>arr.map(o=>`<option value="${o[0]}" ${o[0]===cur?'selected':''}>${esc(o[1])}</option>`).join('');
-  return `<div class="page-head"><div><h1>Pedidos</h1><p>Aprovação: <strong>${S.config.aprovacao==='manual'?'manual (pedidos entram pendentes)':'automática (entram confirmados)'}</strong></p></div><button class="btn small" type="button" data-act="atualizar">Atualizar</button></div>
+  return `<div class="page-head"><div><h1>Pedidos</h1><p>Aprovação: <strong>${S.config.aprovacao==='manual'?'manual (pedidos entram pendentes)':'automática (entram confirmados)'}</strong></p></div><div class="actions"><button class="btn primary" type="button" data-act="ped-msg">Pedido por mensagem</button><button class="btn" type="button" data-act="atualizar">Atualizar</button></div></div>
   <div class="tiles">
     <button class="tile" style="--c:var(--warn);text-align:left;cursor:pointer;font:inherit;color:inherit" type="button" data-act="filtro-pend"><b>${pend.length}</b><span>Pendentes de aprovação</span></button>
     <div class="tile" style="--c:var(--accent)"><b>${hoje.length}</b><span>Retiradas hoje</span></div>
@@ -650,6 +708,40 @@ function dlgPedido(id){
     <button class="btn" type="button" data-act="copiar-comp" data-id="${p.id}">Copiar comprovante</button>
     ${['pendente','confirmado','em_preparacao'].indexOf(p.status)>=0?`<button class="btn danger" type="button" data-act="cancelar" data-id="${p.id}">Cancelar pedido</button>`:''}</div>`,{size:'wide'});
 }
+/* ----- pedido lançado pela administração a partir de uma mensagem ----- */
+function proxData(){ let d=addDays(hojeSrv,1); for(let i=0;i<14&&regraData(d);i++) d=addDays(d,1); return d; }
+function prodsCliente(cid){ const c=S.clientes.find(x=>x.id===cid); if(!c) return []; const no=sabOrd().filter(s=>s.ativo&&c.catalogo[s.id]!==undefined); const fora=sabOrd().filter(s=>s.ativo&&c.catalogo[s.id]===undefined);
+  return no.map(s=>({id:s.id,nome:s.nome,preco:c.catalogo[s.id]!=null?c.catalogo[s.id]:s.preco})).concat(fora.map(s=>({id:s.id,nome:s.nome+' (fora do catálogo)',preco:s.preco,fora:true}))); }
+function dlgPedidoMsg(){
+  const cli=S.clientes.filter(c=>!c.bloqueado);
+  if(!cli.length){ openDlg('Pedido por mensagem','<p style="margin:0">Cadastre um cliente antes, em Clientes.</p>'); return; }
+  openDlg('Pedido por mensagem',`<p class="muted" style="margin:0;font-size:13px">Cole a mensagem que o cliente mandou no WhatsApp. O pedido entra como <b>confirmado</b>, com os preços do catálogo do cliente.</p>
+    <div class="row2"><label class="field">Cliente<select name="cli" id="pmCli"><option value="">Selecione</option>${cli.map(c=>`<option value="${c.id}">${esc(c.nome)}</option>`).join('')}</select></label>
+    <label class="field">Retirada<input type="date" name="d" id="pmData" value="${proxData()}" min="${hojeSrv}"></label></div>
+    <label class="field">Mensagem do cliente<textarea name="msg" id="pmMsg" style="min-height:140px" placeholder="Bom dia! Pedido pra sexta:&#10;Carne: 50&#10;Frango c/ catupiri - 30&#10;4 queijo 20"></textarea></label>
+    <div class="actions"><button class="btn" type="button" data-act="pm-ler">Ler mensagem</button></div>
+    <div id="pmLeitura" style="display:flex;flex-direction:column;gap:10px"></div>
+    <div class="totalbar"><span>Total</span><span id="pmTotal">—</span></div>
+    <div id="pmAviso"></div>`,
+  {size:'wide',ok:'Lançar pedido',onOk:async fd=>{
+    const cid=fd.get('cli'), d=fd.get('d'); if(!cid) return 'Escolha o cliente.'; if(!d) return 'Escolha a data de retirada.';
+    const box=$('#pmLeitura'); if(!box.querySelector('[data-leit]')) return 'Toque em “Ler mensagem” antes de lançar.';
+    const soma=coletaLeitura(box), ids=Object.keys(soma); if(!ids.length) return 'Nenhum sabor com quantidade para lançar.';
+    const regra=await q(sb.rpc('regra_data',{p_data:d}));
+    if(regra&&!fd.get('forcar')){ $('#pmAviso').innerHTML=`<div class="warnbox"><strong>Atenção: ${esc(regra)}.</strong><span>Para os clientes essa data não está disponível agora. Como administração, você pode lançar mesmo assim.</span><label class="check"><input type="checkbox" name="forcar"> Lançar mesmo assim</label></div>`; return 'Confira o aviso sobre a data.'; }
+    const ped=normPed(await q(sb.rpc('admin_criar_pedido',{p_cliente:cid,p_retirada:d,p_itens:ids.map(id=>({sabor_id:id,qtd:soma[id]}))})));
+    S.pedidos.unshift(ped); render(); aoFecharDlg=()=>dlgPedido(ped.id); toast('Pedido nº '+nPed(ped.numero)+' lançado para '+ped.cliente_nome+'.'); return null;
+  }});
+}
+function pmLer(){
+  const cid=$('#pmCli').value; if(!cid){ toast('Escolha o cliente primeiro.'); $('#pmCli').focus(); return; }
+  const P=prodsCliente(cid), dentro=P.filter(p=>!p.fora);
+  const rows=lerMensagem($('#pmMsg').value,dentro.length?dentro:P);
+  const box=$('#pmLeitura'); box.innerHTML=htmlLeitura(rows,P,''); labelTables(box); pmTotal();
+}
+function pmTotal(){ const cid=$('#pmCli')&&$('#pmCli').value, el=$('#pmTotal'); if(!el) return; if(!cid){ el.textContent='—'; return; }
+  const P=prodsCliente(cid), soma=coletaLeitura($('#pmLeitura')); let q2=0,t=0; Object.keys(soma).forEach(id=>{ const p=P.find(x=>x.id===id); if(p){ q2+=soma[id]; t+=soma[id]*p.preco; } });
+  el.textContent=q2?num(q2)+' pastéis · '+brl(t):'—'; }
 async function mudaStatus(p,st,motivo){ const r=await q(sb.rpc('admin_mudar_status',{p_pedido:p.id,p_status:st,p_motivo:motivo||''})); const i=S.pedidos.findIndex(x=>x.id===p.id); const np=Object.assign({},r,{criado_em:p.criado_em}); if(i>=0) S.pedidos[i]=np; return np; }
 function dlgCancelar(id){
   const p=S.pedidos.find(x=>x.id===id);
@@ -853,6 +945,8 @@ document.addEventListener('click',ev=>{
   else if(a==='atualizar') acao(async()=>{ const n=await recarregaPedidos(true); render(); if(!n) toast('Pedidos atualizados.'); });
   else if(a==='filtro-pend'){ ui.af={st:'pendente',cli:'todos',per:'todas'}; render(); }
   else if(a==='ped') dlgPedido(id);
+  else if(a==='ped-msg') dlgPedidoMsg();
+  else if(a==='pm-ler') pmLer();
   else if(a==='avancar') acao(async()=>{ const p=ped(), nx=FLUXO[p.status]; if(!nx) return; b.disabled=true; await mudaStatus(p,nx[0]); const inDlg=!$('#dlg').hidden; render(); if(inDlg) dlgPedido(id); toast('Pedido nº '+nPed(p.numero)+': '+ST[nx[0]].t+'.'); });
   else if(a==='cancelar') dlgCancelar(id);
   else if(a==='copiar-comp') copyText(comprovanteTxt(ped(),S.config.empresa),b);
@@ -876,12 +970,15 @@ document.addEventListener('click',ev=>{
 });
 document.addEventListener('change',ev=>{
   const t=ev.target;
-  if(t.dataset.af){ ui.af[t.dataset.af]=t.value; render(); }
+  if(t.id==='pmCli'){ if($('#pmLeitura').querySelector('[data-leit]')) pmLer(); else pmTotal(); }
+  else if(t.dataset.leit&&t.closest('#pmLeitura')) pmTotal();
+  else if(t.dataset.af){ ui.af[t.dataset.af]=t.value; render(); }
   else if(t.dataset.ar){ ui.ar[t.dataset.ar]=t.value; render(); }
   else if(t.id==='catCopia'&&t.value){ const o=S.clientes.find(x=>x.id===t.value); document.querySelectorAll('#dlgF .catgrid li').forEach(li=>{ const cb=li.querySelector('input[type=checkbox]'), pr=li.querySelector('.price-in'), sid=cb.name.slice(4); const lib=o.catalogo[sid]!==undefined; cb.checked=lib; li.classList.toggle('off',!lib); pr.value=lib&&o.catalogo[sid]!=null?moneyIn(o.catalogo[sid]):''; }); toast('Catálogo de '+o.nome+' copiado. Salve para confirmar.'); t.value=''; }
   else if(t.type==='checkbox'&&t.name&&t.name.indexOf('lib_')===0) t.closest('li').classList.toggle('off',!t.checked);
 });
 document.addEventListener('keydown',ev=>{ if(ev.key==='Escape'&&!$('#dlg').hidden) closeDlg(); });
+document.addEventListener('input',ev=>{ if(ev.target.dataset&&ev.target.dataset.leit==='qtd'&&ev.target.closest('#pmLeitura')) pmTotal(); });
 window.addEventListener('hashchange',route);
 async function autoAtualiza(){ if(estado!=='ok'||document.hidden||!$('#dlg').hidden) return; const foco=document.activeElement&&/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName); try{ const n=await recarregaPedidos(true); if((n||ui.v==='pedidos'||ui.v==='calendario')&&!foco) render(); }catch(e){} }
 setInterval(autoAtualiza,30000);
