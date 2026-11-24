@@ -121,7 +121,7 @@ async function confirmar(btn){
 }
 function vComprovante(){
   const p=(PED||[]).find(x=>x.id===ui.ultimo); if(!p){ ui.v='historico'; return vHistorico(); }
-  const aberto=['pendente','confirmado','em_preparacao'].indexOf(p.status)>=0, novo=!ui.veioDoHist;
+  const aberto=['pendente','confirmado','em_preparacao'].indexOf(p.status)>=0, novo=!ui.veioDoHist&&p.status!=='retirado';
   const msgCancel='Olá! Sou '+D.cliente.nome+' e gostaria de pedir o cancelamento do pedido nº '+nPed(p.numero)+', com retirada em '+dBr(p.retirada)+'.';
   return `<div class="page-head"><div><h1>${novo?'Pedido enviado':'Comprovante'}</h1><p>${novo?(p.status==='pendente'?'Aguardando a confirmação da '+esc(INFO.empresa)+'. Acompanhe em “Meus pedidos”.':'Pedido confirmado. Até a retirada!'):'Guarde ou compartilhe este comprovante.'}</p></div></div>
   ${cardComprovante(p)}

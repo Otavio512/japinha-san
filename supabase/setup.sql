@@ -64,9 +64,12 @@ create table if not exists public.pedidos (
   itens jsonb not null,                              -- preços congelados no momento do pedido
   total_qtd int not null,
   total int not null,
-  status text not null check (status in ('pendente','confirmado','em_preparacao','concluido','cancelado')),
+  status text not null,
   historico jsonb not null default '[]'
 );
+alter table public.pedidos drop constraint if exists pedidos_status_check;
+alter table public.pedidos add constraint pedidos_status_check
+  check (status in ('pendente','confirmado','em_preparacao','concluido','retirado','cancelado'));
 create index if not exists pedidos_retirada_idx on public.pedidos (retirada);
 create index if not exists pedidos_cliente_idx on public.pedidos (cliente_id, criado_em desc);
 
@@ -355,7 +358,7 @@ language plpgsql security definer set search_path = public as $$
 declare p public.pedidos;
 begin
   if not public.is_admin() then raise exception 'SEM_PERMISSAO'; end if;
-  if p_status not in ('pendente','confirmado','em_preparacao','concluido','cancelado') then raise exception 'STATUS_INVALIDO'; end if;
+  if p_status not in ('pendente','confirmado','em_preparacao','concluido','retirado','cancelado') then raise exception 'STATUS_INVALIDO'; end if;
   update public.pedidos set status = p_status,
     historico = historico || jsonb_build_array(jsonb_build_object('quando', to_char(public.agora_br(), 'YYYY-MM-DD HH24:MI'), 'status', p_status, 'por', 'Administração', 'motivo', coalesce(p_motivo, '')))
   where id = p_pedido returning * into p;

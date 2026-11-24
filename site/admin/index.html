@@ -450,7 +450,8 @@ const carBr=s=>s?dBr(s.slice(0,10))+' às '+s.slice(11,16):'—';
 /* hora de Brasília deste aparelho, só para exibição; as regras valem pelo relógio do servidor */
 function agoraLocal(){ const o={}; new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date()).forEach(x=>{ o[x.type]=x.value; }); return o.year+'-'+o.month+'-'+o.day+' '+o.hour+':'+o.minute; }
 function isoSP(iso){ const o={}; new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date(iso)).forEach(x=>{ o[x.type]=x.value; }); return o.year+'-'+o.month+'-'+o.day+' '+o.hour+':'+o.minute; }
-const ST={pendente:{t:'Pendente',c:'warn'},confirmado:{t:'Confirmado',c:'info'},em_preparacao:{t:'Em preparação',c:'ok'},concluido:{t:'Concluído',c:'done'},cancelado:{t:'Cancelado',c:'off'}};
+const ST={pendente:{t:'Pendente',c:'warn'},confirmado:{t:'Confirmado',c:'info'},em_preparacao:{t:'Em preparação',c:'info'},concluido:{t:'Concluído',c:'ok'},retirado:{t:'Retirado',c:'done'},cancelado:{t:'Cancelado',c:'off'}};
+const A_RETIRAR=['pendente','confirmado','em_preparacao','concluido'];
 const waLink=(tel,txt)=>{ let d=String(tel||'').replace(/\D/g,''); if(d&&d.length<=11) d='55'+d; return 'https://wa.me/'+d+'?text='+encodeURIComponent(txt); };
 function labelTables(root){
   (root||document).querySelectorAll('table:not(.no-rt)').forEach(t=>{
@@ -676,7 +677,7 @@ function regraData(d){
 function aPedidos(){
   const n=hojeSrv, f=ui.af;
   let L=S.pedidos.slice();
-  if(f.st==='abertos') L=L.filter(p=>['pendente','confirmado','em_preparacao'].indexOf(p.status)>=0); else if(f.st!=='todos') L=L.filter(p=>p.status===f.st);
+  if(f.st==='abertos') L=L.filter(p=>A_RETIRAR.indexOf(p.status)>=0); else if(f.st!=='todos') L=L.filter(p=>p.status===f.st);
   if(f.cli!=='todos') L=L.filter(p=>p.cliente_id===f.cli);
   if(f.per==='hoje') L=L.filter(p=>p.retirada===n); else if(f.per==='amanha') L=L.filter(p=>p.retirada===addDays(n,1)); else if(f.per==='proximos') L=L.filter(p=>p.retirada>=n&&p.retirada<=addDays(n,6)); else if(f.per==='passados') L=L.filter(p=>p.retirada<n);
   L.sort((a,b)=>f.per==='passados'?(a.retirada<b.retirada?1:-1):(a.retirada<b.retirada?-1:a.retirada>b.retirada?1:a.numero-b.numero));
@@ -690,23 +691,24 @@ function aPedidos(){
     <div class="tile" style="--c:var(--ink)"><b>${brl(hoje.reduce((a,p)=>a+p.total,0))}</b><span>Valor das retiradas de hoje</span></div>
   </div>
   <section class="card"><div class="filters">
-    <label class="field">Situação<select data-af="st">${opt([['abertos','Em aberto'],['todos','Todas']].concat(Object.keys(ST).map(k=>[k,ST[k].t])),f.st)}</select></label>
+    <label class="field">Situação<select data-af="st">${opt([['abertos','A retirar'],['todos','Todas']].concat(Object.keys(ST).map(k=>[k,ST[k].t])),f.st)}</select></label>
     <label class="field">Retirada<select data-af="per">${opt([['proximos','Hoje e próximos 7 dias'],['hoje','Hoje'],['amanha','Amanhã'],['passados','Datas passadas'],['todas','Todas']],f.per)}</select></label>
     <label class="field">Cliente<select data-af="cli">${opt([['todos','Todos']].concat(S.clientes.map(c=>[c.id,c.nome])),f.cli)}</select></label>
     <span class="muted" style="margin-left:auto;font-size:13px">${L.length} pedido${L.length===1?'':'s'}</span></div>
     <div class="tw"><table><thead><tr><th>Pedido</th><th>Cliente</th><th>Feito em</th><th>Retirada</th><th class="num">Pastéis</th><th class="num">Total</th><th>Situação</th><th></th></tr></thead><tbody>
     ${L.slice(0,400).map(p=>`<tr><td><button class="link mono" type="button" data-act="ped" data-id="${p.id}">nº ${nPed(p.numero)}</button></td><td>${esc(p.cliente_nome)}</td><td class="nowrap">${carBr(p.criado_em)}</td><td class="nowrap">${dDow(p.retirada)}</td><td class="num">${num(p.total_qtd)}</td><td class="num money">${brl(p.total)}</td><td><span class="pill ${ST[p.status].c}">${ST[p.status].t}</span></td>
-      <td class="nowrap">${FLUXO[p.status]?`<button class="btn small primary" type="button" data-act="avancar" data-id="${p.id}">${FLUXO[p.status][1]}</button> `:''}<button class="link" type="button" data-act="ped" data-id="${p.id}">Abrir</button></td></tr>`).join('')||'<tr><td colspan="8" class="empty">Nenhum pedido neste filtro.</td></tr>'}
+      <td class="nowrap">${FLUXO[p.status]?`<button class="btn small primary" type="button" data-act="avancar" data-id="${p.id}">${FLUXO[p.status][1]}</button> `:''}${A_RETIRAR.indexOf(p.status)>=0?`<button class="btn small" type="button" data-act="retirar" data-id="${p.id}">Retirou</button> `:''}<button class="link" type="button" data-act="ped" data-id="${p.id}">Abrir</button></td></tr>`).join('')||'<tr><td colspan="8" class="empty">Nenhum pedido neste filtro.</td></tr>'}
     </tbody></table></div></section>`;
 }
 function dlgPedido(id){
   const p=S.pedidos.find(x=>x.id===id); if(!p) return; const c=S.clientes.find(x=>x.id===p.cliente_id)||{};
   const msg='Olá, '+(c.contato||p.cliente_nome)+'! Seu pedido nº '+nPed(p.numero)+' com retirada em '+dBr(p.retirada)+' está: '+ST[p.status].t+'.';
   openDlg('Pedido nº '+nPed(p.numero),cardComprovante(p,true)+`<div class="actions">
-    ${FLUXO[p.status]?`<button class="btn primary" type="button" data-act="avancar" data-id="${p.id}">${FLUXO[p.status][1]}</button>`:''}
+    ${FLUXO[p.status]?`<button class="btn ${p.status==='concluido'?'':'primary'}" type="button" data-act="avancar" data-id="${p.id}">${FLUXO[p.status][1]}</button>`:''}
+    ${A_RETIRAR.indexOf(p.status)>=0?`<button class="btn ${p.status==='concluido'?'primary':''}" type="button" data-act="retirar" data-id="${p.id}">Marcar como retirado</button>`:''}
     ${c.telefone?`<a class="btn" href="${esc(waLink(c.telefone,msg))}" target="_blank" rel="noopener">Avisar cliente no WhatsApp</a>`:''}
     <button class="btn" type="button" data-act="copiar-comp" data-id="${p.id}">Copiar comprovante</button>
-    ${['pendente','confirmado','em_preparacao'].indexOf(p.status)>=0?`<button class="btn danger" type="button" data-act="cancelar" data-id="${p.id}">Cancelar pedido</button>`:''}</div>`,{size:'wide'});
+    ${A_RETIRAR.indexOf(p.status)>=0?`<button class="btn danger" type="button" data-act="cancelar" data-id="${p.id}">Cancelar pedido</button>`:''}</div>`,{size:'wide'});
 }
 /* ----- pedido lançado pela administração a partir de uma mensagem ----- */
 function proxData(){ let d=addDays(hojeSrv,1); for(let i=0;i<14&&regraData(d);i++) d=addDays(d,1); return d; }
@@ -743,6 +745,16 @@ function pmTotal(){ const cid=$('#pmCli')&&$('#pmCli').value, el=$('#pmTotal'); 
   const P=prodsCliente(cid), soma=coletaLeitura($('#pmLeitura')); let q2=0,t=0; Object.keys(soma).forEach(id=>{ const p=P.find(x=>x.id===id); if(p){ q2+=soma[id]; t+=soma[id]*p.preco; } });
   el.textContent=q2?num(q2)+' pastéis · '+brl(t):'—'; }
 async function mudaStatus(p,st,motivo){ const r=await q(sb.rpc('admin_mudar_status',{p_pedido:p.id,p_status:st,p_motivo:motivo||''})); const i=S.pedidos.findIndex(x=>x.id===p.id); const np=Object.assign({},r,{criado_em:p.criado_em}); if(i>=0) S.pedidos[i]=np; return np; }
+function retirar(id){
+  const p=S.pedidos.find(x=>x.id===id); if(!p||A_RETIRAR.indexOf(p.status)<0) return;
+  const antes=p.retirada>hojeSrv, motivo=antes?'Retirado antes da data prevista ('+dShort(p.retirada)+')':'';
+  const fazer=async()=>{ await mudaStatus(p,'retirado',motivo); const inDlg=!$('#dlg').hidden; render(); if(inDlg) dlgPedido(id); toast('Pedido nº '+nPed(p.numero)+' marcado como retirado.'); };
+  if(!antes&&p.status!=='pendente'){ acao(fazer); return; }
+  openDlg('Confirmar retirada',`<p style="margin:0"><strong>${esc(p.cliente_nome)}</strong> · pedido nº ${nPed(p.numero)} · ${num(p.total_qtd)} pastéis</p>
+    ${antes?`<div class="note">A retirada estava marcada para <b>${cap(DOWL[pKey(p.retirada).getDay()])}, ${dBr(p.retirada)}</b>. Ao confirmar, o pedido fica como retirado hoje.</div>`:''}
+    ${p.status==='pendente'?'<div class="warnbox">Este pedido ainda estava pendente de aprovação.</div>':''}`,
+  {ok:'Confirmar retirada',onOk:async()=>{ await mudaStatus(p,'retirado',motivo); render(); aoFecharDlg=()=>dlgPedido(id); toast('Pedido nº '+nPed(p.numero)+' marcado como retirado.'); return null; }});
+}
 function dlgCancelar(id){
   const p=S.pedidos.find(x=>x.id===id);
   openDlg('Cancelar pedido nº '+nPed(p.numero),`<p style="margin:0">${esc(p.cliente_nome)} · retirada ${dBr(p.retirada)} · ${brl(p.total)}</p><label class="field">Motivo<textarea name="m" placeholder="Ex.: cliente pediu pelo WhatsApp antes do início da produção."></textarea></label><p class="muted" style="margin:0;font-size:13px">O pedido continua no histórico do cliente, como cancelado.</p>`,
@@ -949,6 +961,7 @@ document.addEventListener('click',ev=>{
   else if(a==='pm-ler') pmLer();
   else if(a==='avancar') acao(async()=>{ const p=ped(), nx=FLUXO[p.status]; if(!nx) return; b.disabled=true; await mudaStatus(p,nx[0]); const inDlg=!$('#dlg').hidden; render(); if(inDlg) dlgPedido(id); toast('Pedido nº '+nPed(p.numero)+': '+ST[nx[0]].t+'.'); });
   else if(a==='cancelar') dlgCancelar(id);
+  else if(a==='retirar') retirar(id);
   else if(a==='copiar-comp') copyText(comprovanteTxt(ped(),S.config.empresa),b);
   else if(a==='copiar-txt') copyText(b.dataset.txt,b);
   else if(a==='cal-dia'){ ui.cal.sel=b.dataset.d; render(); }

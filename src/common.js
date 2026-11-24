@@ -23,7 +23,8 @@ const carBr=s=>s?dBr(s.slice(0,10))+' às '+s.slice(11,16):'—';
 /* hora de Brasília deste aparelho, só para exibição; as regras valem pelo relógio do servidor */
 function agoraLocal(){ const o={}; new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date()).forEach(x=>{ o[x.type]=x.value; }); return o.year+'-'+o.month+'-'+o.day+' '+o.hour+':'+o.minute; }
 function isoSP(iso){ const o={}; new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date(iso)).forEach(x=>{ o[x.type]=x.value; }); return o.year+'-'+o.month+'-'+o.day+' '+o.hour+':'+o.minute; }
-const ST={pendente:{t:'Pendente',c:'warn'},confirmado:{t:'Confirmado',c:'info'},em_preparacao:{t:'Em preparação',c:'ok'},concluido:{t:'Concluído',c:'done'},cancelado:{t:'Cancelado',c:'off'}};
+const ST={pendente:{t:'Pendente',c:'warn'},confirmado:{t:'Confirmado',c:'info'},em_preparacao:{t:'Em preparação',c:'info'},concluido:{t:'Concluído',c:'ok'},retirado:{t:'Retirado',c:'done'},cancelado:{t:'Cancelado',c:'off'}};
+const A_RETIRAR=['pendente','confirmado','em_preparacao','concluido'];
 const waLink=(tel,txt)=>{ let d=String(tel||'').replace(/\D/g,''); if(d&&d.length<=11) d='55'+d; return 'https://wa.me/'+d+'?text='+encodeURIComponent(txt); };
 function labelTables(root){
   (root||document).querySelectorAll('table:not(.no-rt)').forEach(t=>{
