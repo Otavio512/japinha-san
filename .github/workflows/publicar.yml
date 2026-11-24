@@ -26,9 +26,13 @@ jobs:
       - name: Preparar arquivos do site
         run: cp site/config.js site/supabase.js site/admin/
       - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v4
         with:
           path: site
+      - name: Conferir artefato
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts --jq '.artifacts[] | .name + " " + (.size_in_bytes|tostring)'
       - id: deploy
         uses: actions/deploy-pages@v4
 
