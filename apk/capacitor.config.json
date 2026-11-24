@@ -1,0 +1,8 @@
+{
+  "appId": "br.com.japinhasan.admin",
+  "appName": "Japinha San Admin",
+  "webDir": "www",
+  "plugins": {
+    "SystemBars": { "insetsHandling": "native" }
+  }
+}

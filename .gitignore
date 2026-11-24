@@ -1,0 +1,4 @@
+node_modules/
+apk/android/
+apk/www/
+*.apk
