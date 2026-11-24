@@ -3,7 +3,7 @@ const sb=semConfig()?null:window.supabase.createClient(CFG.url,CFG.key,{auth:{pe
 const TKEY='japinha-token';
 let token=''; try{ token=localStorage.getItem(TKEY)||''; }catch(e){}
 let D=null, PED=null, INFO={empresa:'Japinha San',whatsapp:'',corte:'08:00'}, carregando=false, erroCarga='', dadosEm=0;
-const ui={v:'pedido',msg:'',colar:false,carrinho:{},retirada:'',busca:'',soEscolhidos:false,ultimo:null,veioDoHist:false,rel:{tipo:'semana',ref:''},aviso:''};
+const ui={v:'pedido',carrinho:{},retirada:'',busca:'',soEscolhidos:false,ultimo:null,veioDoHist:false,rel:{tipo:'semana',ref:''},aviso:''};
 try{ const c=JSON.parse(localStorage.getItem('japinha-carrinho')||'null'); if(c) ui.carrinho=c; }catch(e){}
 const salvaCarrinho=()=>{ try{ localStorage.setItem('japinha-carrinho',JSON.stringify(ui.carrinho)); }catch(e){} };
 
@@ -79,12 +79,6 @@ function vPedido(){
   <section class="card"><div class="card-head"><h2>Retirada</h2><span class="muted" style="font-size:13px">Pedido para o mesmo dia até as ${esc(D.config.corte)} (horário de Brasília)</span></div>
     ${datas.length?`<div class="datechips" role="radiogroup" aria-label="Data de retirada">${datas.map(d=>`<button type="button" role="radio" aria-checked="${d===ui.retirada}" class="${d===ui.retirada?'on':''}" data-act="data" data-d="${d}"><span>${rotData(d)}</span><b>${dShort(d)}</b></button>`).join('')}</div>`:'<p class="empty">Nenhuma data disponível no momento.</p>'}
   </section>
-  ${cat.length?`<section class="card"><details id="colarBox" ${ui.colar?'open':''}><summary style="cursor:pointer"><strong>Colar lista de sabores</strong> <span class="muted" style="font-size:13px">· mais rápido: cole sua lista e as quantidades entram sozinhas</span></summary>
-    <div style="display:flex;flex-direction:column;gap:10px;margin-top:10px">
-      <label class="field">Um sabor por linha, com a quantidade<textarea id="msgLista" style="min-height:130px" placeholder="Carne: 50&#10;Frango c/ catupiry: 30&#10;4 queijos - 20&#10;12 pizza">${esc(ui.msg)}</textarea></label>
-      <p class="muted" style="margin:0;font-size:13px">Aceita “Carne: 10”, “Carne - 10”, “10 Carne” e “1 dz de pizza” (= 12). Pequenos erros de escrita são corrigidos; o que ficar em dúvida aparece para você conferir.</p>
-      <div class="actions"><button class="btn" type="button" data-act="ler">Ler lista</button></div>
-      <div id="leitura" style="display:flex;flex-direction:column;gap:10px"></div></div></details></section>`:''}
   <section class="card"><div class="card-head"><h2>Sabores</h2><span class="muted" style="font-size:13px">${cat.length} disponíveis para você</span></div>
     <div class="filters"><label class="field" style="flex:1">Procurar sabor<input id="busca" value="${esc(ui.busca)}" placeholder="Ex.: frango" autocomplete="off"></label>
     <label class="check"><input type="checkbox" id="soEsc" ${ui.soEscolhidos?'checked':''}> Mostrar só os escolhidos</label></div>
@@ -198,10 +192,6 @@ document.addEventListener('click',ev=>{
   else if(a==='recarregar'){ D=null; abrir(); }
   else if(a==='data'){ ui.retirada=b.dataset.d; document.querySelectorAll('.datechips button').forEach(x=>{ const on=x.dataset.d===ui.retirada; x.classList.toggle('on',on); x.setAttribute('aria-checked',on); }); atualizaBarra(); }
   else if(a==='revisar'){ ui.aviso=''; go('revisao'); }
-  else if(a==='ler'){ const box=$('#leitura'); box.innerHTML=htmlLeitura(lerMensagem(ui.msg,catalogo()),catalogo(),'<div class="actions"><button class="btn primary" type="button" data-act="aplicar">Colocar no pedido</button></div>'); labelTables(box); }
-  else if(a==='aplicar'){ const soma=coletaLeitura($('#leitura')), ids=Object.keys(soma); if(!ids.length){ toast('Nenhum sabor com quantidade para colocar no pedido.'); return; }
-    ids.forEach(id=>{ ui.carrinho[id]=soma[id]; }); salvaCarrinho(); ui.msg=''; ui.colar=false; ui.soEscolhidos=true; ui.busca=''; render();
-    toast(ids.length+' sabor'+(ids.length>1?'es':'')+' no pedido. Confira as quantidades e a data.'); window.scrollTo({top:0,behavior:'smooth'}); }
   else if(a==='voltar'){ ui.aviso=''; go('pedido'); }
   else if(a==='confirmar') confirmar(b);
   else if(a==='ver'){ ui.ultimo=id; ui.veioDoHist=true; go('comprovante'); }
@@ -216,11 +206,9 @@ document.addEventListener('input',ev=>{
   const t=ev.target;
   if(t.dataset.qtd){ const v=parseInt0(t.value); if(t.value!==''&&String(v||'')!==t.value) t.value=v||''; const sid=t.dataset.qtd; if(v) ui.carrinho[sid]=v; else delete ui.carrinho[sid]; salvaCarrinho();
     const s=catalogo().find(k=>k.id===sid), li=t.closest('li'); li.classList.toggle('has',!!v); li.querySelector('[data-sub]').textContent=v?brl(v*s.preco):''; atualizaBarra(); }
-  else if(t.id==='msgLista'){ ui.msg=t.value; }
   else if(t.id==='busca'){ ui.busca=t.value; const q=t.value.trim().toLowerCase(); document.querySelectorAll('.cat li').forEach(li=>{ li.hidden=(q&&li.querySelector('.nm').textContent.toLowerCase().indexOf(q)<0)||(ui.soEscolhidos&&!ui.carrinho[li.dataset.sid]); }); }
 });
 document.addEventListener('change',ev=>{ if(ev.target.id==='soEsc'){ ui.soEscolhidos=ev.target.checked; render(); } });
-document.addEventListener('toggle',ev=>{ if(ev.target.id==='colarBox') ui.colar=ev.target.open; },true);
 document.addEventListener('keydown',ev=>{ if(ev.key==='Escape'&&!$('#dlg').hidden) closeDlg(); });
 document.addEventListener('visibilitychange',async()=>{ if(!document.hidden&&token&&D&&ui.v==='pedido'&&!/INPUT/.test((document.activeElement||{}).tagName||'')){ await carregaDados(true); render(); } });
 window.addEventListener('hashchange',route);
